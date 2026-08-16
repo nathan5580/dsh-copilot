@@ -1,0 +1,21 @@
+# dsh-copilot bundle patch: adds the GitHub Copilot LLM adapter and points the
+# default model at it. Applied as a profile layer after dsh-base (and friends)
+# once 'dsh plugin --profile <name> add dsh-copilot' installs this package.
+
+- insert:
+    - id: llm-copilot
+      name: dsh-copilot
+      config:
+        # copilot2api listens on http://127.0.0.1:7777 and serves the OpenAI
+        # routes under /v1. For native mode (no proxy) set:
+        #   baseURL: https://api.githubcopilot.com
+        #   apiKeyEnv: COPILOT_API_KEY   (a real Copilot JWT)
+        baseURL: http://127.0.0.1:7777/v1
+        apiKeyEnv: COPILOT_API_KEY
+
+# Use Copilot as the default model. Change 'model' to any id Copilot accepts;
+# run 'curl http://127.0.0.1:7777/v1/models' to list the current ids.
+- id: agent-default-model
+  config:
+    provider: copilot
+    model: gpt-5.6-luna
