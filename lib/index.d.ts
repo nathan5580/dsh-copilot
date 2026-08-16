@@ -1,8 +1,12 @@
 /**
- * Register a CopilotAdapter for the `copilot` provider route on ctx.llm.
- * Connection facts resolve once per request instead of freezing at load, so a
- * changed base URL or key reaches the very next request without restarting,
- * while an in-flight stream keeps the facts it started with.
+ * Register a CopilotAdapter for the `copilot` provider route on ctx.llm, and
+ * declare it in the configurable-provider directory backed by a
+ * `llm-copilot` settings section. Connection facts resolve once per request
+ * (layered over the hot-reloaded settings section), so editing the provider on
+ * the Web Models page or in settings.yaml reaches the very next request while
+ * an in-flight stream keeps the facts it started with. The bearer token
+ * resolves per request through the credential seam, then the environment, then
+ * a literal override, with a `dummy` fallback the local proxy accepts.
  *
  * @module dsh-copilot
  */
@@ -44,8 +48,8 @@ export interface Config {
 export declare const Config: z<Config>;
 /**
  * The one explicit resolve step from raw config to validated connection facts.
- * @param config - raw plugin config.
- * @returns validated connection facts.
+ * @param config - raw plugin config or resolved settings snapshot.
+ * @returns validated connection facts plus the credential reference.
  */
 export declare function resolveAdapterOptions(config: Config): CopilotConnectionOptions;
 export declare function apply(ctx: Context, config: Config): void;

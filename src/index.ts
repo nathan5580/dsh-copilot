@@ -1,8 +1,12 @@
 /**
- * Register a CopilotAdapter for the `copilot` provider route on ctx.llm.
- * Connection facts resolve once per request instead of freezing at load, so a
- * changed base URL or key reaches the very next request without restarting,
- * while an in-flight stream keeps the facts it started with.
+ * Register a CopilotAdapter for the `copilot` provider route on ctx.llm, and
+ * declare it in the configurable-provider directory backed by a
+ * `llm-copilot` settings section. Connection facts resolve once per request
+ * (layered over the hot-reloaded settings section), so editing the provider on
+ * the Web Models page or in settings.yaml reaches the very next request while
+ * an in-flight stream keeps the facts it started with. The bearer token
+ * resolves per request through the credential seam, then the environment, then
+ * a literal override, with a `dummy` fallback the local proxy accepts.
  *
  * @module dsh-copilot
  */
@@ -10,6 +14,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
+import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import {
   CopilotAdapter,
   DEFAULT_CONTEXT_WINDOW,
@@ -32,6 +38,8 @@ export type * from './types.js'
 export const name = 'llm-copilot'
 export const inject = ['llm']
 
+/** Settings namespace whose section configures this provider (the Web Models page writes it). */
+const NS = settingsNamespace('llm-copilot')
 /** Environment variable naming this provider's key; the local proxy ignores it, so it defaults to dummy. */
 const DEFAULT_API_KEY_ENV = 'COPILOT_API_KEY'
 /** Default endpoint: the local copilot2api proxy. Set native mode to https://api.githubcopilot.com. */
@@ -87,7 +95,7 @@ const catalogModel: z<CopilotCatalogModel> = z.object({
 export const Config: z<Config> = z.object({
   baseURL: z.string(),
   apiKeyEnv: z.string().role('credential-ref').default(DEFAULT_API_KEY_ENV),
-  apiKey: z.string(),
+  apiKey: z.string().role('secret'),
   reasoningEffort: z.union(['off', 'low', 'medium', 'high']),
   maxTokens: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULT_MAX_TOKENS),
   defaultContextWindow: z.number().step(1).min(1).default(DEFAULT_CONTEXT_WINDOW),
@@ -125,8 +133,8 @@ function resolveModels(models: readonly CopilotCatalogModel[] | undefined): Copi
 
 /**
  * The one explicit resolve step from raw config to validated connection facts.
- * @param config - raw plugin config.
- * @returns validated connection facts.
+ * @param config - raw plugin config or resolved settings snapshot.
+ * @returns validated connection facts plus the credential reference.
  */
 export function resolveAdapterOptions(config: Config): CopilotConnectionOptions {
   if (config.defaultContextWindow !== undefined
@@ -147,6 +155,8 @@ export function resolveAdapterOptions(config: Config): CopilotConnectionOptions 
   }
   return {
     baseURL: config.baseURL ?? DEFAULT_BASE_URL,
+    apiKeyEnv: credentialRef(config.apiKeyEnv ?? DEFAULT_API_KEY_ENV),
+    apiKey: config.apiKey,
     defaults: { reasoningEffort: config.reasoningEffort },
     maxTokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
     defaultContextWindow: config.defaultContextWindow ?? DEFAULT_CONTEXT_WINDOW,
@@ -156,16 +166,57 @@ export function resolveAdapterOptions(config: Config): CopilotConnectionOptions 
 }
 
 export function apply(ctx: Context, config: Config): void {
-  const options = (): CopilotConnectionOptions => resolveAdapterOptions(config)
-  const resolveApiKey = async (): Promise<string> => {
-    if (config.apiKey !== undefined && config.apiKey.length > 0) return config.apiKey
-    const env = config.apiKeyEnv ?? DEFAULT_API_KEY_ENV
-    const key = process.env[env]
-    if (key !== undefined && key.length > 0) return key
+  let current: () => Config = () => config
+  let lastRaw: Config | undefined
+  let lastGood: CopilotConnectionOptions | undefined
+  const options = (): CopilotConnectionOptions => {
+    const raw = current()
+    if (raw === lastRaw && lastGood !== undefined) return lastGood
+    try {
+      const next = resolveAdapterOptions(raw)
+      lastRaw = raw
+      lastGood = next
+      return next
+    } catch (error) {
+      // Static composition resolves before anything registers, so this branch
+      // only sees a live settings snapshot failing a beyond-schema bound: keep
+      // serving the last good facts and say so once per bad snapshot.
+      if (lastGood === undefined) throw error
+      lastRaw = raw
+      ctx.logger.error('dsh-copilot: keeping the last good configuration after an invalid settings section')
+      ctx.logger.error(error)
+      return lastGood
+    }
+  }
+  options()
+
+  const resolveApiKey = async (connection: CopilotConnectionOptions): Promise<string> => {
+    // A literal key is an explicit override; it never travels with stale facts.
+    if (connection.apiKey !== undefined && connection.apiKey.length > 0) return connection.apiKey
+    // The credential seam (the Web Models page writes the managed store).
+    const credentials = ctx.get('credentials')
+    if (credentials !== undefined) {
+      const hit = await credentials.resolve(connection.apiKeyEnv)
+      if (hit !== undefined && hit.value.length > 0) return hit.value
+    }
+    // Environment fallback for deployments with no managed store mounted.
+    const ambient = process.env[connection.apiKeyEnv]
+    if (ambient !== undefined && ambient.length > 0) return ambient
     // The local Copilot proxy accepts any bearer token; native mode requires a
-    // real Copilot JWT, supplied via apiKey or the configured environment.
+    // real Copilot JWT, supplied via apiKey or the configured credential.
     return 'dummy'
   }
+
   const adapter = new CopilotAdapter({ options, resolveApiKey })
+  ctx.llm.registerConfigurableProviders([
+    { provider: PROVIDER, displayName: 'GitHub Copilot', settingsNs: NS, settingsPath: [] },
+  ])
   ctx.llm.registerAdapter([PROVIDER], adapter)
+
+  installSettingsSection(ctx, NS, Config, config, {
+    setSource: (source) => {
+      current = source
+    },
+    onChange: () => {},
+  })
 }

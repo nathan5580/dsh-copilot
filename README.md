@@ -83,7 +83,7 @@ Every field is optional:
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `baseURL` | `http://127.0.0.1:7777/v1` | Endpoint base; `/chat/completions` is appended. Use `https://api.githubcopilot.com` for native mode. |
-| `apiKeyEnv` | `COPILOT_API_KEY` | Environment variable holding the bearer token. The local proxy ignores it. |
+| `apiKeyEnv` | `COPILOT_API_KEY` | Credential reference (env-var name); resolved per request through the credential store, then the environment. The local proxy ignores it. |
 | `apiKey` | — | Literal bearer token override (wins over `apiKeyEnv`); for native mode. |
 | `reasoningEffort` | — | `off` \| `low` \| `medium` \| `high`; `off` omits the wire field. |
 | `maxTokens` | `16384` | Default per-request output cap; explicit request values win. |
@@ -109,6 +109,15 @@ Or change the default model:
     model: claude-opus-4.6
 ```
 
+### Web Models page
+
+Because the plugin registers a settings section, the Models page shows `copilot` with an
+inline form for `baseURL`, `apiKeyEnv`, `reasoningEffort`, `maxTokens`, `models`, and the
+other fields. Saving it writes the `llm-copilot:` section of `$DSH_HOME/settings.yaml`,
+hot-reloaded without restart — the same place the form writes for DeepSeek. `apiKeyEnv` is a
+credential reference, resolved per request through the credential store (also editable on the
+page), then the environment.
+
 ### Finding current model ids
 
 Copilot's model ids churn. List the ids the proxy currently exposes:
@@ -132,10 +141,6 @@ this plugin — that is exactly what the proxy automates.
 
 ## Known limitations
 
-- **Configured via files, not the Web Models form.** The `copilot` provider is a live,
-  selectable route (its models appear in the picker), but the editable settings form on the
-  Models page is not wired up yet (that needs the harness settings seam). Configure it in
-  `cordis.patch.yml` / `settings.yaml` instead.
 - **No built-in token refresh.** Proxy mode delegates auth to the proxy; native mode expects
   you to supply and refresh the JWT yourself.
 - **The model catalog is advisory.** Copilot's ids are undocumented and change frequently; the

@@ -28,6 +28,7 @@ import type {
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
+import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { serializeRequest } from './serialize.js'
 import type { RequestDefaults } from './serialize.js'
 import { parseSse } from './sse.js'
@@ -52,6 +53,15 @@ export interface CopilotCatalogModel {
 export interface CopilotConnectionOptions {
   /** Endpoint base; `/chat/completions` is appended. */
   baseURL: string
+  /**
+   * Credential reference of this same resolution, resolved per request.
+   * Travelling with the endpoint is the point: a request can never pair one
+   * generation's URL with another generation's secret. Configuration carries
+   * only this name — a literal key is not a configuration value.
+   */
+  apiKeyEnv: CredentialRef
+  /** Literal bearer-token override of this same resolution (native mode). */
+  apiKey?: string
   /** Request defaults applied to every call (reasoning effort). */
   defaults: RequestDefaults
   /** Default per-request output cap; explicit request values win. */

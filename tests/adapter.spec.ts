@@ -205,3 +205,24 @@ describe('httpErrorCode', () => {
     expect(httpErrorCode(429, { message: 'request rate limit exceeded' })).toBe('RATE_LIMIT')
   })
 })
+
+describe('registration', () => {
+  it('registers the copilot provider and unregisters on dispose (HMR safety)', async () => {
+    const server = await mockServer([])
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    const fiber = await ctx.plugin(LlmCopilot, { baseURL: server.url })
+
+    expect(ctx.llm.listProviders()).toEqual([{ id: 'copilot', name: 'GitHub Copilot' }])
+    expect(ctx.llm.listConfigurableProviders()).toEqual([{
+      provider: 'copilot',
+      displayName: 'GitHub Copilot',
+      settingsNs: 'llm-copilot',
+      settingsPath: [],
+    }])
+
+    await fiber.dispose()
+    expect(ctx.llm.listProviders()).toEqual([])
+    expect(ctx.llm.listConfigurableProviders()).toEqual([])
+  })
+})
