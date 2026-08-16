@@ -3,6 +3,23 @@
   "description": "Use your GitHub Copilot subscription in DeepSeek Harness: an OpenAI-compatible LLM adapter plus a profile bundle",
   "version": "0.1.0",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathan5580/dsh-copilot.git"
+  },
+  "homepage": "https://github.com/nathan5580/dsh-copilot#readme",
+  "bugs": {
+    "url": "https://github.com/nathan5580/dsh-copilot/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "github-copilot",
+    "copilot",
+    "llm",
+    "openai",
+    "plugin"
+  ],
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

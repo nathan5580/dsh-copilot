@@ -1,19 +1,24 @@
 # dsh-copilot
 
-Use your **GitHub Copilot subscription** as a model provider in [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
+Use your **GitHub Copilot subscription** as a model provider in
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-`dsh-copilot` is an OpenAI-compatible LLM adapter plus a profile bundle. It registers a
-`copilot` provider route on `ctx.llm` and points the default model at it, so once it is
-installed the harness talks to Copilot instead of DeepSeek. It streams (SSE), supports tool
-calls and reasoning, and maps provider errors to the harness's stable failure codes.
+`dsh-copilot` is an OpenAI-compatible LLM adapter **and** a profile bundle. Installing it
+registers a `copilot` provider route on `ctx.llm` and points the default model at it, so the
+harness talks to Copilot instead of DeepSeek. It streams (SSE), supports tool calls and
+reasoning, and maps provider errors to the harness's stable failure codes.
 
-> **How it works:** GitHub's Copilot endpoint is OpenAI-compatible, but getting a token
+> **How it works.** GitHub's Copilot endpoint is OpenAI-compatible, but obtaining a token
 > requires GitHub's OAuth device flow plus a ~20-minute JWT refresh loop. Rather than
 > reimplement that here, this plugin points at a **local Copilot proxy** (the recommended
 > [`copilot2api`](https://github.com/whtsky/copilot2api)) that already owns auth and token
-> refresh. The plugin speaks plain `/v1/chat/completions`, so it also works directly
-> against `https://api.githubcopilot.com` if you supply your own token (see
+> refresh. The plugin speaks plain `/v1/chat/completions`, so it also works directly against
+> `https://api.githubcopilot.com` if you supply a token (see
 > [Native mode](#native-mode-no-proxy)).
+
+```
+dsh (harness)  ->  dsh-copilot (adapter)  ->  copilot2api (local proxy)  ->  api.githubcopilot.com
+```
 
 ---
 
@@ -21,7 +26,9 @@ calls and reasoning, and maps provider errors to the harness's stable failure co
 
 ### 0. Prerequisites
 
-- Node.js `^22.19 || >=24` and the `dsh` CLI.
+- Node.js `^22.19 || >=24`.
+- The `dsh` CLI at version `0.1.0-rc.6` or newer (the harness's `next` line; check with
+  `dsh --version`).
 - A GitHub Copilot subscription.
 - A Copilot proxy — this guide uses `copilot2api`.
 
@@ -54,12 +61,13 @@ dsh plugin --profile headless add github:nathan5580/dsh-copilot
 
 `dsh plugin add` runs `pnpm add` in the profile directory, then detects this package's
 `dsh.bundle` manifest and adds it to the profile's bundle layers, so its patch is applied
-automatically. No hand-editing of `cordis.yml` is required.
+automatically. No hand-editing of `cordis.yml` is required. The committed `lib/` means the
+git install needs no build step and no `prepare` script to allowlist.
 
 ### 3. Run a task
 
 ```sh
-dsh --profile headless "summarize the file README.md"
+dsh --profile headless 'summarize the file README.md'
 ```
 
 The bundle patch sets the default model to `copilot` / `gpt-5.6-luna`. Change it (or pick a
@@ -109,17 +117,43 @@ Copilot's model ids churn. List the ids the proxy currently exposes:
 curl -s http://127.0.0.1:7777/v1/models
 ```
 
-Then set the id you want in `agent-default-model` (or select it in the Web Models page).
+Then set the id you want in `agent-default-model` (or select it in the model picker).
 
 ---
 
 ## Native mode (no proxy)
 
-If you prefer to talk to Copilot directly, point `baseURL` at
-`https://api.githubcopilot.com` and supply a real Copilot bearer token via `apiKey` or
-`apiKeyEnv`. Obtaining and refreshing that token (GitHub device flow →
+Point `baseURL` at `https://api.githubcopilot.com` and supply a real Copilot bearer token
+via `apiKey` or `apiKeyEnv`. Obtaining and refreshing that token (GitHub device flow →
 `https://api.github.com/copilot_internal/v2/token`, refreshed every ~20 minutes) is outside
 this plugin — that is exactly what the proxy automates.
+
+---
+
+## Known limitations
+
+- **Configured via files, not the Web Models form.** The `copilot` provider is a live,
+  selectable route (its models appear in the picker), but the editable settings form on the
+  Models page is not wired up yet (that needs the harness settings seam). Configure it in
+  `cordis.patch.yml` / `settings.yaml` instead.
+- **No built-in token refresh.** Proxy mode delegates auth to the proxy; native mode expects
+  you to supply and refresh the JWT yourself.
+- **The model catalog is advisory.** Copilot's ids are undocumented and change frequently; the
+  built-in list is a convenience, and requests are never rejected for using an unlisted id.
+
+---
+
+## Troubleshooting
+
+- **`ECONNREFUSED 127.0.0.1:7777`** — the proxy is not running. Start `copilot2api` first.
+- **the `copilot` provider is missing** — the bundle layer was not added. Re-run
+  `dsh plugin --profile <name> add github:nathan5580/dsh-copilot` and check that
+  `dsh.profile.bundles` in the profile's `package.json` lists `dsh-copilot`.
+- **an unknown-model / 404 error from Copilot** — the model id is stale. Run
+  `curl -s http://127.0.0.1:7777/v1/models` and update `agent-default-model`.
+- **pnpm blocks a build script** — this package ships no `prepare` script, so a normal
+  `dsh plugin add` needs no `allowBuilds` entry. If your pnpm version still prompts for a
+  git dependency, add the printed key to `pnpm-workspace.yaml` in the profile directory.
 
 ---
 
@@ -132,10 +166,10 @@ npm test            # build + vitest (mock OpenAI-compatible SSE server)
 npm run build       # emit lib/ (committed, so git installs need no build step)
 ```
 
-The transport mirrors the harness's own DeepSeek adapter: `src/serialize.ts` (messages →
-wire), `src/sse.ts` (SSE framing), `src/translate.ts` (wire deltas → harness chunks), and
-`src/adapter.ts` (the `LlmAdapter`). `src/index.ts` is the function plugin
-(`name` / `inject` / `Config` / `apply`).
+Layout: `src/serialize.ts` (messages → wire), `src/sse.ts` (SSE framing),
+`src/translate.ts` (wire deltas → harness chunks), `src/adapter.ts` (the `LlmAdapter`),
+and `src/index.ts` (the function plugin: `name` / `inject` / `Config` / `apply`). The
+transport mirrors the harness's own DeepSeek adapter, so the wire protocol is proven.
 
 ---
 
