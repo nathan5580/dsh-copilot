@@ -106,6 +106,15 @@ describe('CopilotAdapter against a mock server', () => {
     expect(server.headers[0]?.['authorization']).toBe('Bearer test-key')
   })
 
+  it('accepts EOF after a terminal finish chunk when the proxy omits [DONE]', async () => {
+    const server = await mockServer([{ kind: 'sse', events: textEvents.slice(0, -1) }])
+    const ctx = await harness(server.url)
+
+    const result = await assemble(ctx, { model: 'gpt-5.6-luna', messages: [userMessage('hi')] })
+    expect(result.message.content).toEqual([{ type: 'text', text: 'hello' }])
+    expect(result.finish).toEqual({ kind: 'stop' })
+  })
+
   it('streams raw chunks through ctx.llm.stream', async () => {
     const server = await mockServer([{ kind: 'sse', events: textEvents, delayMs: 2 }])
     const ctx = await harness(server.url)

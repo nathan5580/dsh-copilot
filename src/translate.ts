@@ -91,6 +91,23 @@ export async function* translate(payloads: AsyncIterable<string>): AsyncGenerato
   let pendingFinish: FinishReason | undefined
   let pendingUsage: TokenUsage | undefined
 
+  async function* complete(): AsyncGenerator<StreamChunk> {
+    for (const block of order) {
+      yield { type: 'block-end', index: block.index, block: closeBlock(block) }
+    }
+    if (pendingUsage) yield { type: 'usage', usage: pendingUsage }
+    const reason = pendingFinish ?? { kind: 'stop' as const }
+    yield {
+      type: 'finish',
+      reason: reason.kind === 'stop' && order.length === 0
+        ? {
+          kind: 'error',
+          failure: { message: 'model returned a completed response with no content', code: EMPTY_RESPONSE_CODE },
+        }
+        : reason,
+    }
+  }
+
   function open(kind: OpenBlock['kind']): OpenBlock {
     const block: OpenBlock = { index: nextIndex++, kind, text: '' }
     order.push(block)
@@ -99,20 +116,7 @@ export async function* translate(payloads: AsyncIterable<string>): AsyncGenerato
 
   for await (const payload of payloads) {
     if (payload === DONE) {
-      for (const block of order) {
-        yield { type: 'block-end', index: block.index, block: closeBlock(block) }
-      }
-      if (pendingUsage) yield { type: 'usage', usage: pendingUsage }
-      const reason = pendingFinish ?? { kind: 'stop' as const }
-      yield {
-        type: 'finish',
-        reason: reason.kind === 'stop' && order.length === 0
-          ? {
-            kind: 'error',
-            failure: { message: 'model returned a completed response with no content', code: EMPTY_RESPONSE_CODE },
-          }
-          : reason,
-      }
+      yield* complete()
       return
     }
 
@@ -180,5 +184,8 @@ export async function* translate(payloads: AsyncIterable<string>): AsyncGenerato
     if (chunk.usage) pendingUsage = mapUsage(chunk.usage)
   }
 
-  throw new LlmError('SSE payload stream ended without [DONE]', 'STREAM_CLOSED')
+  if (pendingFinish === undefined) {
+    throw new LlmError('SSE stream ended before a terminal finish event', 'STREAM_CLOSED')
+  }
+  yield* complete()
 }
