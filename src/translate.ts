@@ -22,6 +22,10 @@ interface OpenBlock {
   name?: string
 }
 
+function fallbackCallId(index: number): string {
+  return `dsh-tool-call-${index}`
+}
+
 /**
  * Map the wire finish_reason vocabulary to the harness FinishReason.
  * @param reason - the wire `finish_reason` string.
@@ -151,7 +155,11 @@ export async function* translate(payloads: AsyncIterable<string>): AsyncGenerato
           toolBlocks.set(call.index, block)
           yield { type: 'block-start', index: block.index, blockType: 'tool-call' }
         }
-        if (call.id !== undefined) block.callId = call.id
+        if (call.id !== undefined && call.id.length > 0) {
+          block.callId = call.id
+        } else if (block.callId === undefined) {
+          block.callId = fallbackCallId(call.index)
+        }
         if (call.function?.name !== undefined) block.name = call.function.name
         const fragment = call.function?.arguments ?? ''
         block.text += fragment
