@@ -1,17 +1,15 @@
 /**
  * Serialize harness messages into OpenAI-compatible chat completions. User
  * text is joined; assistant text becomes `content`, tool calls become
- * `tool_calls`, and tool results become separate tool messages. Core image
- * blocks are rejected explicitly because this wire route is text-only; unknown
- * declaration-merged block types retain the adapter's documented extension
- * fallback.
+ * `tool_calls`, and image blocks are resolved through the attachment service
+ * into OpenAI-compatible data URLs.
  *
  * @module dsh-copilot/serialize
  */
 
-import { contentHasImage, LlmError } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock, GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
-import type { WireMessage, WireRequest, WireTool } from './types.js'
+import { LlmError } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, GenerateOptions, ImageBlock, Message } from '@deepseek-ai/dsh-llm'
+import type { WireContent, WireMessage, WireRequest, WireTool } from './types.js'
 
 /** Adapter-level request defaults (from plugin config). */
 export interface RequestDefaults {
@@ -39,23 +37,51 @@ function resolveReasoning(options: GenerateOptions, defaults: RequestDefaults): 
 }
 
 /** Join the text blocks of a message (used for user/tool-result content). */
-function flattenText(blocks: ContentBlock[]): string {
+function flattenText(blocks: readonly ContentBlock[]): string {
   return blocks
     .filter(block => block.type === 'text')
     .map(block => block.text)
     .join('')
 }
 
-/** Reject core image content before any text-flattening path can silently erase it. */
-function assertTextOnly(blocks: readonly ContentBlock[]): void {
-  if (contentHasImage(blocks)) {
-    throw new LlmError('The Copilot chat-completions adapter does not support image content.', 'UNSUPPORTED_CONTENT')
+export interface ImageResolver {
+  (image: ImageBlock['attachment'], signal?: AbortSignal): Promise<{ data: Uint8Array; mediaType: string }>
+}
+
+function dataUrl(data: Uint8Array, mediaType: string): string {
+  return `data:${mediaType};base64,${Buffer.from(data).toString('base64')}`
+}
+
+async function serializeContent(
+  blocks: readonly ContentBlock[],
+  resolveImage: ImageResolver | undefined,
+  signal?: AbortSignal,
+): Promise<WireContent> {
+  const hasImage = blocks.some(block => block.type === 'image')
+  if (!hasImage) return flattenText(blocks)
+  if (resolveImage === undefined) {
+    throw new LlmError('Copilot image content requires an attachment resolver.', 'UNSUPPORTED_CONTENT')
   }
+
+  const parts: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = []
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      parts.push({ type: 'text', text: block.text })
+    } else if (block.type === 'image') {
+      const image = await resolveImage(block.attachment, signal)
+      parts.push({ type: 'image_url', image_url: { url: dataUrl(image.data, image.mediaType) } })
+    }
+  }
+  return parts
 }
 
 /** Serialize one assistant message (text + tool calls). */
-function serializeAssistant(message: Message): WireMessage {
-  const text = flattenText(message.content)
+async function serializeAssistant(
+  message: Message,
+  resolveImage: ImageResolver | undefined,
+  signal?: AbortSignal,
+): Promise<WireMessage> {
+  const content = await serializeContent(message.content, resolveImage, signal)
   const toolCalls = message.content
     .filter(block => block.type === 'tool-call')
     .map(block => ({
@@ -68,7 +94,7 @@ function serializeAssistant(message: Message): WireMessage {
     role: 'assistant',
     // Text-less turns send "" — NEVER null. Pure tool-call turns replay "" and
     // some gateways reject null outright.
-    content: text,
+    content,
     ...toolCalls.length > 0 ? { tool_calls: toolCalls } : {},
   }
 }
@@ -81,24 +107,27 @@ function serializeAssistant(message: Message): WireMessage {
  * @param messages - the harness conversation, in order.
  * @returns the wire messages; order preserved, each tool result expanded into its own entry.
  */
-export function serializeMessages(messages: Message[]): WireMessage[] {
+export async function serializeMessages(
+  messages: Message[],
+  resolveImage?: ImageResolver,
+  signal?: AbortSignal,
+): Promise<WireMessage[]> {
   const wire: WireMessage[] = []
   for (const message of messages) {
-    assertTextOnly(message.content)
     if (message.role === 'system') {
       wire.push({ role: 'system', content: flattenText(message.content) })
       continue
     }
     if (message.role === 'assistant') {
-      wire.push(serializeAssistant(message))
+      wire.push(await serializeAssistant(message, resolveImage, signal))
       continue
     }
     // user role: tool results ride in user messages in the harness
     // vocabulary, but the wire wants them as role:'tool' messages.
     const toolResults = message.content.filter(block => block.type === 'tool-result')
-    const text = flattenText(message.content)
-    if (text.length > 0 || toolResults.length === 0) {
-      wire.push({ role: 'user', content: text })
+    const content = await serializeContent(message.content, resolveImage, signal)
+    if ((typeof content === 'string' && content.length > 0) || (Array.isArray(content) && content.length > 0) || toolResults.length === 0) {
+      wire.push({ role: 'user', content })
     }
     for (const result of toolResults) {
       wire.push({
@@ -123,34 +152,38 @@ export function serializeMessages(messages: Message[]): WireMessage[] {
 export function serializeRequest(
   options: GenerateOptions,
   defaults: RequestDefaults = {},
-): WireRequest {
+  resolveImage?: ImageResolver,
+  signal?: AbortSignal,
+): Promise<WireRequest> {
   const messages: WireMessage[] = []
   if (options.system !== undefined) {
     messages.push({ role: 'system', content: options.system })
   }
-  messages.push(...serializeMessages(options.messages))
+  return serializeMessages(options.messages, resolveImage, signal).then(serializedMessages => {
+    messages.push(...serializedMessages)
 
-  const tools: WireTool[] | undefined = options.tools?.map(tool => ({
-    type: 'function',
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    },
-  }))
-  const resolvedReasoning = resolveReasoning(options, defaults)
+    const tools: WireTool[] | undefined = options.tools?.map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+    }))
+    const resolvedReasoning = resolveReasoning(options, defaults)
 
-  return {
-    model: options.model,
-    messages,
-    stream: true,
-    stream_options: { include_usage: true },
-    ...resolvedReasoning.reasoningEffort !== undefined
-      ? { reasoning_effort: resolvedReasoning.reasoningEffort }
-      : {},
-    ...tools !== undefined && tools.length > 0 ? { tools } : {},
-    ...options.temperature !== undefined ? { temperature: options.temperature } : {},
-    ...options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens },
-    ...options.stop !== undefined ? { stop: options.stop } : {},
-  }
+    return {
+      model: options.model,
+      messages,
+      stream: true,
+      stream_options: { include_usage: true },
+      ...resolvedReasoning.reasoningEffort !== undefined
+        ? { reasoning_effort: resolvedReasoning.reasoningEffort }
+        : {},
+      ...tools !== undefined && tools.length > 0 ? { tools } : {},
+      ...options.temperature !== undefined ? { temperature: options.temperature } : {},
+      ...options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens },
+      ...options.stop !== undefined ? { stop: options.stop } : {},
+    }
+  })
 }

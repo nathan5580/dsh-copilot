@@ -1,18 +1,22 @@
 /**
  * Serialize harness messages into OpenAI-compatible chat completions. User
  * text is joined; assistant text becomes `content`, tool calls become
- * `tool_calls`, and tool results become separate tool messages. Core image
- * blocks are rejected explicitly because this wire route is text-only; unknown
- * declaration-merged block types retain the adapter's documented extension
- * fallback.
+ * `tool_calls`, and image blocks are resolved through the attachment service
+ * into OpenAI-compatible data URLs.
  *
  * @module dsh-copilot/serialize
  */
-import type { GenerateOptions, Message } from '@deepseek-ai/dsh-llm';
+import type { GenerateOptions, ImageBlock, Message } from '@deepseek-ai/dsh-llm';
 import type { WireMessage, WireRequest } from './types.js';
 /** Adapter-level request defaults (from plugin config). */
 export interface RequestDefaults {
     reasoningEffort?: 'off' | 'low' | 'medium' | 'high' | undefined;
+}
+export interface ImageResolver {
+    (image: ImageBlock['attachment'], signal?: AbortSignal): Promise<{
+        data: Uint8Array;
+        mediaType: string;
+    }>;
 }
 /**
  * Serialize the conversation. `tool-result` blocks become standalone
@@ -22,7 +26,7 @@ export interface RequestDefaults {
  * @param messages - the harness conversation, in order.
  * @returns the wire messages; order preserved, each tool result expanded into its own entry.
  */
-export declare function serializeMessages(messages: Message[]): WireMessage[];
+export declare function serializeMessages(messages: Message[], resolveImage?: ImageResolver, signal?: AbortSignal): Promise<WireMessage[]>;
 /**
  * Build the full wire request. Always streaming (`stream: true`, usage
  * reporting on); optional fields are omitted rather than sent as null, so
@@ -31,5 +35,5 @@ export declare function serializeMessages(messages: Message[]): WireMessage[];
  * @param defaults - adapter-level reasoning defaults; undefined fields put nothing on the wire.
  * @returns the chat-completions request body.
  */
-export declare function serializeRequest(options: GenerateOptions, defaults?: RequestDefaults): WireRequest;
+export declare function serializeRequest(options: GenerateOptions, defaults?: RequestDefaults, resolveImage?: ImageResolver, signal?: AbortSignal): Promise<WireRequest>;
 //# sourceMappingURL=serialize.d.ts.map

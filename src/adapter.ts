@@ -30,6 +30,7 @@ import type {
 import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { serializeRequest } from './serialize.js'
+import type { ImageResolver } from './serialize.js'
 import type { RequestDefaults } from './serialize.js'
 import { parseSse } from './sse.js'
 import { translate } from './translate.js'
@@ -80,6 +81,7 @@ export interface CopilotAdapterOptions {
   options: () => CopilotConnectionOptions
   /** Resolve the bearer token for the connection facts of one request. */
   resolveApiKey: (connection: CopilotConnectionOptions) => Promise<string>
+  resolveImage?: ImageResolver
 }
 
 /** Default maximum idle interval while an adapter stream read is outstanding. */
@@ -103,7 +105,7 @@ function modelInfo(provider: string, model: CopilotCatalogModel): LlmModelInfo {
     id: model.id,
     name: model.name ?? model.id,
     ...model.description === undefined ? {} : { description: model.description },
-    inputModalities: ['text'],
+    inputModalities: ['text', 'image'],
   }
 }
 
@@ -248,7 +250,7 @@ export class CopilotAdapter extends LlmAdapter {
     apiKey: string,
     onComment: () => void,
   ): AsyncIterable<StreamChunk> {
-    const body = serializeRequest(options, connection.defaults)
+    const body = await serializeRequest(options, connection.defaults, this.config.resolveImage, signal)
     // Prepared outside the try so the TRANSPORT label below covers exactly the
     // transport boundary, never a serialization failure.
     const payload = JSON.stringify(body)

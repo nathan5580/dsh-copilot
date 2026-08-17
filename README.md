@@ -128,6 +128,13 @@ curl -s http://127.0.0.1:7777/v1/models
 
 Then set the id you want in `agent-default-model` (or select it in the model picker).
 
+### Image input
+
+Models that expose vision, including `gpt-5.6-luna`, accept harness image attachments.
+The adapter reads durable images through `ctx.attachments` and sends them as
+OpenAI-compatible `image_url` data URLs. The attachment service must be installed
+and active in the harness profile.
+
 ---
 
 ## Native mode (no proxy)

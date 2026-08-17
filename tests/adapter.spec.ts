@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import LlmRuntime, {
   createUserMessage,
   CONTEXT_WINDOW_EXCEEDED_CODE,
@@ -60,6 +61,48 @@ describe('CopilotAdapter against a mock server', () => {
       stream: true,
       stream_options: { include_usage: true },
     })
+
+    await (async () => {
+      const server = await mockServer([{ kind: 'sse', events: textEvents }])
+      const imageMessage = createUserMessage({
+        content: [
+          { type: 'text', text: 'What is this?' },
+          {
+            type: 'image',
+            attachment: {
+              attachmentId: AttachmentId('test-image'),
+              mediaType: 'image/png',
+              bytes: 3,
+              width: 1,
+              height: 1,
+            },
+          },
+        ],
+        source: { kind: 'plugin', plugin: 'test' },
+      })
+      const adapter = new CopilotAdapter({
+        options: () => resolveAdapterOptions({ baseURL: server.url }),
+        resolveApiKey: () => Promise.resolve('test-key'),
+        resolveImage: async () => ({
+          data: new Uint8Array([1, 2, 3]),
+          mediaType: 'image/png',
+        }),
+      })
+
+      for await (const _chunk of adapter.stream({
+        provider: 'copilot',
+        model: 'gpt-5.6-luna',
+        messages: [imageMessage],
+      })) { /* drain */ }
+
+      expect(server.requests[0]?.messages).toEqual([{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'What is this?' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,AQID' } },
+        ],
+      }])
+    })()
     expect(server.headers[0]?.['authorization']).toBe('Bearer test-key')
   })
 

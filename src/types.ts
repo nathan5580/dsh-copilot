@@ -30,10 +30,23 @@ export interface WireSystemMessage {
   content: string
 }
 
-/** User-role message: a single string of user input. */
+/** OpenAI-compatible multimodal content part. */
+export interface WireTextPart {
+  type: 'text'
+  text: string
+}
+
+export interface WireImagePart {
+  type: 'image_url'
+  image_url: { url: string }
+}
+
+export type WireContent = string | Array<WireTextPart | WireImagePart>
+
+/** User-role message with text and optional images. */
 export interface WireUserMessage {
   role: 'user'
-  content: string
+  content: WireContent
 }
 
 /** Tool-role message: the result of one tool call, keyed by its call id. */
@@ -53,7 +66,7 @@ export type WireMessage =
 /** Assistant-role history message. `content` is "" (never null) on tool-call-only turns. */
 export interface WireAssistantMessage {
   role: 'assistant'
-  content: string | null
+  content: WireContent | null
   tool_calls?: WireToolCall[]
 }
 

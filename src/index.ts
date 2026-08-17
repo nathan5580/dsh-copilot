@@ -23,6 +23,7 @@ import {
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
 } from './adapter.js'
 import type { CopilotCatalogModel, CopilotConnectionOptions } from './adapter.js'
+import type { ImageResolver } from './serialize.js'
 
 export {
   CopilotAdapter,
@@ -207,7 +208,19 @@ export function apply(ctx: Context, config: Config): void {
     return 'dummy'
   }
 
-  const adapter = new CopilotAdapter({ options, resolveApiKey })
+  const attachments = ctx.get('attachments', false) as {
+    readImage: (
+      ref: Parameters<NonNullable<ImageResolver>>[0],
+      signal?: AbortSignal,
+    ) => Promise<{ data: Uint8Array; ref: { mediaType: string } }>
+  } | undefined
+  const resolveImage: ImageResolver | undefined = attachments === undefined
+    ? undefined
+    : async (ref, signal) => {
+      const image = await attachments.readImage(ref, signal)
+      return { data: image.data, mediaType: image.ref.mediaType }
+    }
+  const adapter = new CopilotAdapter({ options, resolveApiKey, resolveImage })
   ctx.llm.registerConfigurableProviders([
     { provider: PROVIDER, displayName: 'GitHub Copilot', settingsNs: NS, settingsPath: [] },
   ])

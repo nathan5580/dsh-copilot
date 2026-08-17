@@ -11,6 +11,7 @@
 import { LlmAdapter } from '@deepseek-ai/dsh-llm';
 import type { GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials';
+import type { ImageResolver } from './serialize.js';
 import type { RequestDefaults } from './serialize.js';
 import type { WireError } from './types.js';
 /** One optional model entry advertised by the direct-fetch adapter. */
@@ -56,6 +57,7 @@ export interface CopilotAdapterOptions {
     options: () => CopilotConnectionOptions;
     /** Resolve the bearer token for the connection facts of one request. */
     resolveApiKey: (connection: CopilotConnectionOptions) => Promise<string>;
+    resolveImage?: ImageResolver;
 }
 /** Default maximum idle interval while an adapter stream read is outstanding. */
 export declare const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300000;
