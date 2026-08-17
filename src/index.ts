@@ -14,6 +14,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
+import { LlmError } from '@deepseek-ai/dsh-llm'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import {
@@ -208,18 +209,19 @@ export function apply(ctx: Context, config: Config): void {
     return 'dummy'
   }
 
-  const attachments = ctx.get('attachments', false) as {
-    readImage: (
-      ref: Parameters<NonNullable<ImageResolver>>[0],
-      signal?: AbortSignal,
-    ) => Promise<{ data: Uint8Array; ref: { mediaType: string } }>
-  } | undefined
-  const resolveImage: ImageResolver | undefined = attachments === undefined
-    ? undefined
-    : async (ref, signal) => {
-      const image = await attachments.readImage(ref, signal)
-      return { data: image.data, mediaType: image.ref.mediaType }
+  const resolveImage: ImageResolver = async (ref, signal) => {
+    const attachments = ctx.get('attachments', false) as {
+      readImage: (
+        ref: Parameters<NonNullable<ImageResolver>>[0],
+        signal?: AbortSignal,
+      ) => Promise<{ data: Uint8Array; ref: { mediaType: string } }>
+    } | undefined
+    if (attachments === undefined) {
+      throw new LlmError('Copilot image content requires the harness attachment service.', 'UNSUPPORTED_CONTENT')
     }
+    const image = await attachments.readImage(ref, signal)
+    return { data: image.data, mediaType: image.ref.mediaType }
+  }
   const adapter = new CopilotAdapter({ options, resolveApiKey, resolveImage })
   ctx.llm.registerConfigurableProviders([
     { provider: PROVIDER, displayName: 'GitHub Copilot', settingsNs: NS, settingsPath: [] },
